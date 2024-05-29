@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -20,10 +21,22 @@ class HomePageState extends State<HomePage> {
   String _highTemp = "--";
   String _lowTemp = "--";
 
-  final String _apiKey = 'ca7125e0df61234bbfddef29c1ababde';
+  List<Map<String, dynamic>> _hourlyForecast = [];
 
+  final String _apiKeyOpenweather = 'ca7125e0df61234bbfddef29c1ababde';
+
+  String getWeatherIcon(String weatherIconCode) {
+    switch (weatherIconCode) {
+      case '01d': // clear sky (day)
+        return 'images/Symbols/sun logo.png';
+      default:
+        return 'images/Symbols/cloud.png';
+    }
+  }
+  
   @override
   void initState() {
+    // geolocator
     super.initState();
     _getCurrentLocation();
   }
@@ -65,22 +78,60 @@ class HomePageState extends State<HomePage> {
       return;
     }
 
-    Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+    Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high);
+
     _fetchWeather(position.latitude, position.longitude);
+    _fetchHourlyForecast(position.latitude,
+        position.longitude); // Call the _fetchHourlyForecast() method here
+  }
+
+  Future<void> _fetchHourlyForecast(double latitude, double longitude) async {
+    final response = await http.get(Uri.parse(
+        'https://api.openweathermap.org/data/2.5/forecast?lat=$latitude&lon=$longitude&units=metric&appid=$_apiKeyOpenweather'));
+
+    if (response.statusCode == 200) {
+      final Map<String, dynamic> data = json.decode(response.body);
+      final List<dynamic> hourlyForecasts = data['list'];
+
+      // Extracting the first 6 hours of forecast data
+      setState(() {
+        _hourlyForecast = hourlyForecasts.where((forecast) {
+          final DateTime forecastTime =
+              DateTime.fromMillisecondsSinceEpoch(forecast['dt'] * 1000);
+          return forecastTime.isBefore(DateTime.now().add(Duration(hours: 24)));
+        }).map((forecast) {
+          final DateTime forecastTime =
+              DateTime.fromMillisecondsSinceEpoch(forecast['dt'] * 1000);
+          return {
+            'time': forecastTime,
+            'temperature': forecast['main']['temp'].toStringAsFixed(0),
+            'weatherIcon': forecast['weather'][0]['icon'],
+          };
+        }).toList();
+      });
+    } else {
+      setState(() {
+        _weatherDescription = "Failed to fetch hourly forecast data.";
+      });
+    }
   }
 
   Future<void> _fetchWeather(double latitude, double longitude) async {
     final response = await http.get(Uri.parse(
-        'https://api.openweathermap.org/data/2.5/weather?lat=$latitude&lon=$longitude&units=metric&appid=$_apiKey'));
+        'https://api.openweathermap.org/data/2.5/weather?lat=$latitude&lon=$longitude&units=metric&appid=$_apiKeyOpenweather'));
 
     if (response.statusCode == 200) {
       final Map<String, dynamic> data = json.decode(response.body);
       setState(() {
         _location = data['name'];
-        _temperature = data['main']['temp'].toString();
+        _temperature =
+            double.parse(data['main']['temp'].toString()).toStringAsFixed(0);
         _weatherDescription = data['weather'][0]['description'];
-        _highTemp = data['main']['temp_max'].toString();
-        _lowTemp = data['main']['temp_min'].toString();
+        _highTemp = double.parse(data['main']['temp_max'].toString())
+            .toStringAsFixed(0);
+        _lowTemp = double.parse(data['main']['temp_min'].toString())
+            .toStringAsFixed(0);
       });
     } else {
       setState(() {
@@ -88,6 +139,22 @@ class HomePageState extends State<HomePage> {
       });
     }
   }
+
+  Future<DateTime> getCurrentTimeForLocation(
+      double latitude, double longitude) async {
+    final response = await http.get(Uri.parse(
+        'https://api.openweathermap.org/data/2.5/weather?lat=$latitude&lon=$longitude&appid=$_apiKeyOpenweather'));
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      final timeZoneOffset = data['timezone'];
+      return DateTime.now().add(Duration(seconds: timeZoneOffset));
+    } else {
+      throw Exception('Failed to get current time for location');
+    }
+  }
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -148,7 +215,8 @@ class HomePageState extends State<HomePage> {
                             Center(
                               child: Text(
                                 _location,
-                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 24),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold, fontSize: 24),
                               ),
                             ),
                             const SizedBox(height: 20), //spacing
@@ -180,7 +248,7 @@ class HomePageState extends State<HomePage> {
                                   child: Column(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     crossAxisAlignment:
-                                    CrossAxisAlignment.center,
+                                        CrossAxisAlignment.center,
                                     children: [
                                       Text('$_temperature°',
                                           style: const TextStyle(fontSize: 80)),
@@ -206,149 +274,42 @@ class HomePageState extends State<HomePage> {
                                 color: Colors.white
                                     .withOpacity(0.3), // background color
                                 borderRadius:
-                                BorderRadius.circular(20), // border corners
+                                    BorderRadius.circular(20), // border corners
                               ),
                               // hourly forecast widget
                               padding: const EdgeInsets.all(16),
                               margin: const EdgeInsets.all(16),
                               child: SingleChildScrollView(
-                                //horizontally scrollable widget
                                 scrollDirection: Axis.horizontal,
                                 child: Row(
-                                  // row for every hour
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   crossAxisAlignment: CrossAxisAlignment.center,
-                                  children: [
-                                    Column(
-                                      // column to display time, weather conditions and temperature
-                                      children: [
-                                        const Center(
-                                          child: Text('1pm'),
-                                        ),
-                                        Image.asset('images/Symbols/cloud.png'),
-                                        const Center(
-                                          child: Text(
-                                            '17°',
-                                            style: TextStyle(
-                                              // temp style
-                                                fontSize: 20,
-                                                fontWeight: FontWeight.bold),
+                                  children: _hourlyForecast.map((forecast) {
+                                    return Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 10.0),
+                                      child: Column(
+                                        children: [
+                                          Center(
+                                            child: Text(DateFormat('HH:mm').format(forecast['time']),
+                                            ),
                                           ),
-                                        )
-                                      ],
-                                    ),
-                                    const SizedBox(
-                                        width: 28), //  horizontal spacing
-                                    Column(
-                                      children: [
-                                        const Center(
-                                          child: Text('2pm'),
-                                        ),
-                                        Image.asset(
-                                            'images/Symbols/cloud-drizzle.png'),
-                                        const Center(
-                                          child: Text(
-                                            '15°',
-                                            style: TextStyle(
-                                              // temp style
+                                          Image.asset(getWeatherIcon(forecast['weatherIcon'])),
+                                          Center(
+                                            child: Text(
+                                              '${forecast['temperature']}°',
+                                              style: const TextStyle(
                                                 fontSize: 20,
-                                                fontWeight: FontWeight.bold),
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
                                           ),
-                                        )
-                                      ],
-                                    ),
-                                    const SizedBox(
-                                        width: 28), //  horizontal spacing
-                                    Column(
-                                      children: [
-                                        const Center(
-                                          child: Text('3pm'),
-                                        ),
-                                        Image.asset(
-                                            'images/Symbols/cloud-lightning.png'),
-                                        const Center(
-                                          child: Text(
-                                            '13°',
-                                            style: TextStyle(
-                                              // temp style
-                                                fontSize: 20,
-                                                fontWeight: FontWeight.bold),
-                                          ),
-                                        )
-                                      ],
-                                    ),
-                                    const SizedBox(
-                                        width: 28), //  horizontal spacing
-                                    Column(
-                                      children: [
-                                        const Center(
-                                          child: Text('4pm'),
-                                        ),
-                                        Image.asset(
-                                            'images/Symbols/cloud-snow.png'),
-                                        const Center(
-                                          child: Text(
-                                            '12°',
-                                            style: TextStyle(
-                                              // temp style
-                                                fontSize: 20,
-                                                fontWeight: FontWeight.bold),
-                                          ),
-                                        )
-                                      ],
-                                    ),
-                                    const SizedBox(
-                                        width: 28), //  horizontal spacing
-                                    Column(
-                                      children: [
-                                        const Center(
-                                          child: Text('5pm'),
-                                        ),
-                                        Image.asset(
-                                            'images/Symbols/sun logo.png'),
-                                        const Center(
-                                          child: Text(
-                                            '11°',
-                                            style: TextStyle(
-                                              // temp style
-                                                fontSize: 20,
-                                                fontWeight: FontWeight.bold),
-                                          ),
-                                        )
-                                      ],
-                                    ),
-                                    const SizedBox(
-                                        width: 28), //  horizontal spacing
-                                    Column(
-                                      children: [
-                                        const Center(
-                                          child: Text('6pm'),
-                                        ),
-                                        Image.asset(
-                                            'images/Symbols/cloud-lightning.png'),
-                                        const Center(
-                                          child: Text(
-                                            '20°',
-                                            style: TextStyle(
-                                              // temp style
-                                                fontSize: 20,
-                                                fontWeight: FontWeight.bold),
-                                          ),
-                                        )
-                                      ],
-                                    )
-                                  ],
+                                        ],
+                                      ),
+                                    );
+                                  }).toList(),
                                 ),
                               ),
-                            ),
-                            Container(
-                              // trees asset display
-                              decoration: const BoxDecoration(
-                                image: DecorationImage(
-                                  image: AssetImage('images/Sunny/Trees.png'),
-                                  fit: BoxFit.cover, // image fit
-                                ),
-                              ),
+
                             ),
                           ],
                         ),
@@ -358,42 +319,34 @@ class HomePageState extends State<HomePage> {
                 );
               },
             ),
-            if (_isDialogVisible) // to display the search bar
-              BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5), // blur effect
+            if (_isDialogVisible)
+              Dialog(
+                backgroundColor: Colors.transparent,
                 child: Container(
-                  color: Colors.black.withOpacity(0.5), // blur darkening effect
-                  child: Center(
-                      child: Column(
-                        children: [
-                          const SizedBox(height: 40), // spacing
-                          Container(
-                            height: 50,
-                            width: 300,
-                            decoration: BoxDecoration(
-                              // search bar design
-                                color: Colors.white,
-                                border: Border.all(color: Colors.black, width: 1.0),
-                                borderRadius: BorderRadius.circular(10)),
-                            child: TextField(
-                              // search bar text field
-                              inputFormatters: [
-                                FilteringTextInputFormatter.allow(
-                                    RegExp(r'[a-zA-Z,\s]'))
-                              ], // Restrict to alphabets and whitespaces
-
-                              decoration: const InputDecoration(
-                                // Text field design
-                                hintText: 'Berlin, Germany',
-                                prefixIcon: Icon(Icons.search),
-                                border: InputBorder.none,
-                                contentPadding: EdgeInsets.symmetric(
-                                    vertical: 12.0, horizontal: 12.0),
-                              ),
-                            ),
-                          )
-                        ],
-                      )),
+                  height: 100,
+                  color: Colors.transparent,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      TextField(
+                        decoration: const InputDecoration(
+                          filled: true,
+                          fillColor: Colors.white,
+                          hintText: 'Search location',
+                          border: OutlineInputBorder(),
+                        ),
+                        onSubmitted: (value) {
+                          _toggleTextBox();
+                          // Perform location search here
+                        },
+                      ),
+                      const SizedBox(height: 20),
+                      ElevatedButton(
+                        onPressed: _toggleTextBox,
+                        child: const Text('Cancel'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
           ],
